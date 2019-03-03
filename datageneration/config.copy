@@ -1,12 +1,12 @@
 [SYNTH_DATA]
-tmp_path           = '/home/gvarol/datasets/SURREAL/tmp/run0'
-output_path        = '/home/gvarol/datasets/SURREAL/out' # output folder
-bg_path            = '/sequoia/data2/gvarol/datasets/LSUN/data/img/'
-openexr_py2_path   = "/sequoia/data1/gvarol/tools/OpenEXR/OpenEXR-1.2.0/build/lib.linux-x86_64-2.7"
+tmp_path           = '/home/jingweim/SURREAL/tmp/run0'
+output_path        = '/home/jingweim/SURREAL/out' # output folder
+bg_path            = '/home/jingweim/urop/MITindoor64/bedroom/'
+openexr_py2_path   = "/home/jingweim/urop/OpenEXR-1.2.0/build/lib.linux-x86_64-2.7"
 
 output_types       = {'depth':True, 'fg':False, 'gtflow':False, 'normal':False, 'segm':True, 'vblur':False}
 
-smpl_data_folder   = 'smpl_data'
+smpl_data_folder   = '/home/jingweim/urop/surreal/datageneration/smpl_data/SURREAL/smpl_data'
 smpl_data_filename = 'smpl_data.npz'
 clothing_option    = 'all' # grey, nongrey or all
 

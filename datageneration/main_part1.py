@@ -236,8 +236,8 @@ def init_scene(scene, params, gender='female'):
     scn.objects.active = cam_ob
 
     cam_ob.matrix_world = Matrix(((0., 0., 1, params['camera_distance']),
-                                 (0., -1, 0., -1.0),
-                                 (-1., 0., 0., 0.),
+                                 (1., 0., 0., 0.),
+                                 (0., 1., 0., 0.),
                                  (0.0, 0.0, 0.0, 1.0)))
     cam_ob.data.angle = math.radians(40)
     cam_ob.data.lens =  60
@@ -683,6 +683,7 @@ def main():
     
     arm_ob.animation_data_clear()
     cam_ob.animation_data_clear()
+    arm_ob.rotation_euler.x -= math.pi / 2
 
     # create a keyframe animation with pose, translation, blendshapes and camera motion
     # LOOP TO CREATE 3D ANIMATION
