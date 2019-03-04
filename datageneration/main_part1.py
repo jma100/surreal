@@ -237,7 +237,7 @@ def init_scene(scene, params, gender='female'):
 
     cam_ob.matrix_world = Matrix(((0., 0., 1, params['camera_distance']),
                                  (1., 0., 0., 0.),
-                                 (0., 1., 0., 0.),
+                                 (0., 1., 0., 1.),
                                  (0.0, 0.0, 0.0, 1.0)))
     cam_ob.data.angle = math.radians(40)
     cam_ob.data.lens =  60
@@ -709,7 +709,8 @@ def main():
         if seq_frame == 0 or reset_loc: 
             reset_loc = False
             new_pelvis_loc = arm_ob.matrix_world.copy() * arm_ob.pose.bones[obname+'_Pelvis'].head.copy()
-            cam_ob.location = orig_cam_loc.copy() + (new_pelvis_loc.copy() - orig_pelvis_loc.copy())
+            rotated_orig = Vector([orig_pelvis_loc.copy()[0], orig_pelvis_loc.copy()[2], -orig_pelvis_loc.copy()[1]])
+            cam_ob.location = orig_cam_loc.copy() + (new_pelvis_loc.copy() - rotated_orig.copy())
             cam_ob.keyframe_insert('location', frame=get_real_frame(seq_frame))
             dict_info['camLoc'] = np.array(cam_ob.location)
 
