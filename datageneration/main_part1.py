@@ -427,6 +427,7 @@ def main():
     
     # import idx info (name, split)
     idx_info = load(open("pkl/idx_info.pickle", 'rb'))
+    idx_info = [x for x in idx_info if x['name'][:4] != 'h36m']
 
     # get runpass
     (runpass, idx) = divmod(idx, len(idx_info))
