@@ -66,7 +66,7 @@ def create_segmentation(ob, params):
     return(materials)
 
 # create the different passes that we render
-def create_composite_nodes(tree, params, img=None, idx=0):
+def create_composite_nodes(tree, params, idx=0):
     res_paths = {k:join(params['tmp_path'], '%05d_%s'%(idx, k)) for k in params['output_types'] if params['output_types'][k]}
     
     # clear default nodes
@@ -76,12 +76,6 @@ def create_composite_nodes(tree, params, img=None, idx=0):
     # create node for foreground image
     layers = tree.nodes.new('CompositorNodeRLayers')
     layers.location = -300, 400
-
-    # create node for background image
-    bg_im = tree.nodes.new('CompositorNodeImage')
-    bg_im.location = -300, 30
-    if img is not None:
-        bg_im.image = img
 
     if(params['output_types']['vblur']):
     # create node for computing vector blur (approximate motion blur)
@@ -94,11 +88,6 @@ def create_composite_nodes(tree, params, img=None, idx=0):
         vblur_out.format.file_format = 'PNG'
         vblur_out.base_path = res_paths['vblur']
         vblur_out.location = 460, 460
-
-    # create node for mixing foreground and background images 
-    mix = tree.nodes.new('CompositorNodeMixRGB')
-    mix.location = 40, 30
-    mix.use_alpha = True
 
     # create node for the final output 
     composite_out = tree.nodes.new('CompositorNodeComposite')
@@ -138,18 +127,15 @@ def create_composite_nodes(tree, params, img=None, idx=0):
         segm_out.location = 40, 400
         segm_out.format.file_format = 'OPEN_EXR'
         segm_out.base_path = res_paths['segm']
-    
-    # merge fg and bg images
-    tree.links.new(bg_im.outputs[0], mix.inputs[1])
-    tree.links.new(layers.outputs['Image'], mix.inputs[2])
+
     
     if(params['output_types']['vblur']):
-        tree.links.new(mix.outputs[0], vblur.inputs[0])                # apply vector blur on the bg+fg image,
+        tree.links.new(layers.outputs['Image'], vblur.inputs[0])                # apply vector blur on the bg+fg image,
         tree.links.new(layers.outputs['Z'], vblur.inputs[1])           #   using depth,
         tree.links.new(layers.outputs['Speed'], vblur.inputs[2])       #   and flow.
         tree.links.new(vblur.outputs[0], vblur_out.inputs[0])          # save vblurred output
     
-    tree.links.new(mix.outputs[0], composite_out.inputs[0])            # bg+fg image
+    tree.links.new(layers.outputs['Image'], composite_out.inputs[0])            # bg+fg image
     if(params['output_types']['fg']):
         tree.links.new(layers.outputs['Image'], fg_out.inputs[0])      # save fg
     if(params['output_types']['depth']):    
@@ -214,6 +200,9 @@ def Rodrigues(rotvec):
     return(cost*np.eye(3) + (1-cost)*r.dot(r.T) + np.sin(theta)*mat)
 
 def init_scene(scene, params, gender='female'):
+    # load bg model
+    bpy.ops.import_scene.obj(filepath=params['bg_model_path'])
+
     # load fbx model
     bpy.ops.import_scene.fbx(filepath=join(params['smpl_data_folder'], 'basicModel_%s_lbs_10_207_0_v1.0.2.fbx' % gender[0]),
                              axis_forward='Y', axis_up='Z', global_scale=100)
@@ -446,7 +435,7 @@ def main():
     
     smpl_data_folder = params['smpl_data_folder']
     smpl_data_filename = params['smpl_data_filename']
-    bg_path = params['bg_path']
+    bg_model_path = params['bg_model_path']
     resy = params['resy']
     resx = params['resx']
     clothing_option = params['clothing_option'] # grey, nongrey or all
@@ -519,13 +508,6 @@ def main():
     scene.cycles.shading_system = True
     scene.use_nodes = True
 
-    log_message("Listing background images")
-    bg_names = join(bg_path, '%s_img.txt' % idx_info['use_split'])
-    nh_txt_paths = []
-    with open(bg_names) as f:
-        for line in f:
-            nh_txt_paths.append(join(bg_path, line))
-
     # grab clothing names
     log_message("clothing: %s" % clothing_option)
     with open( join(smpl_data_folder, 'textures', '%s_%s.txt' % ( gender, idx_info['use_split'] ) ) ) as f:
@@ -542,17 +524,13 @@ def main():
     cloth_img_name = join(smpl_data_folder, cloth_img_name)
     cloth_img = bpy.data.images.load(cloth_img_name)
 
-    # random background
-    bg_img_name = choice(nh_txt_paths)[:-1]
-    bg_img = bpy.data.images.load(bg_img_name)
-
     log_message("Loading parts segmentation")
     beta_stds = np.load(join(smpl_data_folder, ('%s_beta_stds.npy' % gender)))
     
     log_message("Building materials tree")
     mat_tree = bpy.data.materials['Material'].node_tree
     create_sh_material(mat_tree, sh_dst, cloth_img)
-    res_paths = create_composite_nodes(scene.node_tree, params, img=bg_img, idx=idx)
+    res_paths = create_composite_nodes(scene.node_tree, params, idx=idx)
 
     log_message("Loading smpl data")
     smpl_data = np.load(join(smpl_data_folder, smpl_data_filename))
@@ -650,7 +628,6 @@ def main():
 
     # allocate
     dict_info = {}
-    dict_info['bg'] = np.zeros((N,), dtype=np.object) # background image path
     dict_info['camLoc'] = np.empty(3) # (1, 3)
     dict_info['clipNo'] = ishape +1
     dict_info['cloth'] = np.zeros((N,), dtype=np.object) # clothing texture image path
@@ -715,7 +692,6 @@ def main():
             cam_ob.keyframe_insert('location', frame=get_real_frame(seq_frame))
             dict_info['camLoc'] = np.array(cam_ob.location)
 
-    scene.node_tree.nodes['Image'].image = bg_img
 
     for part, material in materials.items():
         material.node_tree.nodes['Vector Math'].inputs[1].default_value[:2] = (0, 0)
@@ -735,7 +711,6 @@ def main():
         scene.frame_set(get_real_frame(seq_frame))
         iframe = seq_frame
 
-        dict_info['bg'][iframe] = bg_img_name
         dict_info['cloth'][iframe] = cloth_img_name
         dict_info['light'][:, iframe] = sh_coeffs
 
