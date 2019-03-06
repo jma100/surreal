@@ -65,6 +65,15 @@ def create_segmentation(ob, params):
         bpy.ops.object.mode_set(mode='OBJECT')
     return(materials)
 
+def add_postfix_nodes_paths(postfix):
+    names = ['File Output','File Output.001']
+    for name in names:
+        path = bpy.context.scene.node_tree.nodes[name].base_path
+        if "Camera" in path:
+            bpy.context.scene.node_tree.nodes[name].base_path = join(path.split('Camera')[0], postfix)
+        else:
+            bpy.context.scene.node_tree.nodes[name].base_path = join(path,postfix)
+
 # create the different passes that we render
 def create_composite_nodes(tree, params, img=None, idx=0):
     res_paths = {k:join(params['tmp_path'], '%05d_%s'%(idx, k)) for k in params['output_types'] if params['output_types'][k]}
@@ -244,6 +253,7 @@ def init_scene(scene, params, gender='female'):
     cam_ob.data.clip_start = 0.1
     cam_ob.data.sensor_width = 32
 
+
     # setup an empty object in the center which will be the parent of the Camera
     # this allows to easily rotate an object around the origin
     scn.cycles.film_transparent = True
@@ -264,7 +274,17 @@ def init_scene(scene, params, gender='female'):
     arm_ob = bpy.data.objects['Armature']
     arm_ob.animation_data_clear()
 
-    return(ob, obname, arm_ob, cam_ob)
+    # set new camera that tracks armature
+    bpy.ops.object.camera_add()
+    track_cam = bpy.data.objects['Camera.001']
+    track_cam.matrix_world = Matrix(((0., 0., 1, 4.0), (1.0, 0, 0, 0), (0.0, 1., 0, 1), (0.0, 0.0, 0.0, 1.0)))
+    bpy.ops.object.constraint_add(type='LOCKED_TRACK')
+    track_cam.constraints["Locked Track"].target = arm_ob
+    track_cam.constraints["Locked Track"].track_axis = 'TRACK_NEGATIVE_Z'
+    track_cam.constraints["Locked Track"].lock_axis = 'LOCK_Y'
+    track_cam.constraints["Locked Track"].subtarget = obname + '_Pelvis'
+
+    return(ob, obname, arm_ob, cam_ob, track_cam)
 
 # transformation between pose and blendshapes
 def rodrigues2bshapes(pose):
@@ -427,6 +447,7 @@ def main():
     
     # import idx info (name, split)
     idx_info = load(open("pkl/idx_info.pickle", 'rb'))
+    idx_info = [x for x in idx_info if x['name'][:4] != 'h36m']
 
     # get runpass
     (runpass, idx) = divmod(idx, len(idx_info))
@@ -484,6 +505,7 @@ def main():
     # create tmp directory
     if not exists(tmp_path):
         mkdir_safe(tmp_path)
+
     
     # >> don't use random generator before this point <<
 
@@ -559,7 +581,7 @@ def main():
     log_message("Initializing scene")
     camera_distance = np.random.normal(8.0, 1)
     params['camera_distance'] = camera_distance
-    ob, obname, arm_ob, cam_ob = init_scene(scene, params, gender)
+    ob, obname, arm_ob, cam_ob, track_cam = init_scene(scene, params, gender)
 
     setState0()
     ob.select = True
@@ -644,8 +666,6 @@ def main():
     curr_shape = np.zeros_like(shape)
     nframes = len(data['poses'][::stepsize])
 
-    matfile_info = join(output_path, name.replace(" ", "") + "_c%04d_info.mat" % (ishape+1))
-    log_message('Working on %s' % matfile_info)
 
     # allocate
     dict_info = {}
@@ -715,7 +735,6 @@ def main():
             dict_info['camLoc'] = np.array(cam_ob.location)
 
     scene.node_tree.nodes['Image'].image = bg_img
-
     for part, material in materials.items():
         material.node_tree.nodes['Vector Math'].inputs[1].default_value[:2] = (0, 0)
 
@@ -728,101 +747,123 @@ def main():
         for sc in scs:
             sc.inputs[ish+1].default_value = coeff
 
+    # bpy.ops.scene.new(type='LINK_OBJECTS')
+    # bpy.ops.object.select_all(action='DESELECT')
+    # bpy.data.objects['Camera'].select = True
+    # bpy.ops.object.delete(use_global=False)
+    #
+    # scene_list = ['Scene', 'Scene.001']
+
     # iterate over the keyframes and render
     # LOOP TO RENDER
-    for seq_frame, (pose, trans) in enumerate(zip(data['poses'][fbegin:fend:stepsize], data['trans'][fbegin:fend:stepsize])):
-        scene.frame_set(get_real_frame(seq_frame))
-        iframe = seq_frame
+    for obj in scene.objects:
+        if obj.type == 'CAMERA':
+            bpy.context.scene.camera = obj
+            print('Set camera %s' % obj.name)
+            if not exists(join(rgb_path, obj.name)):
+                mkdir_safe(join(rgb_path, obj.name))
+            if not exists(join(output_path, obj.name)):
+                mkdir_safe(join(output_path, obj.name))
+            matfile_info = join(output_path, obj.name, name.replace(" ", "") + "_c%04d_info.mat" % (ishape + 1))
+            log_message('Working on %s' % matfile_info)
 
-        dict_info['bg'][iframe] = bg_img_name
-        dict_info['cloth'][iframe] = cloth_img_name
-        dict_info['light'][:, iframe] = sh_coeffs
+            add_postfix_nodes_paths(obj.name)
+            for k, folder in res_paths.items():
+                if not exists(join(folder, obj.name)):
+                    mkdir_safe(join(folder, obj.name))
+            for seq_frame, (pose, trans) in enumerate(zip(data['poses'][fbegin:fend:stepsize], data['trans'][fbegin:fend:stepsize])):
+                scene.frame_set(get_real_frame(seq_frame))
+                iframe = seq_frame
 
-        scene.render.use_antialiasing = False
-        scene.render.filepath = join(rgb_path, 'Image%04d.png' % get_real_frame(seq_frame))
+                dict_info['bg'][iframe] = bg_img_name
+                dict_info['cloth'][iframe] = cloth_img_name
+                dict_info['light'][:, iframe] = sh_coeffs
 
-        log_message("Rendering frame %d" % seq_frame)
-        
-        # disable render output
-        logfile = '/dev/null'
-        open(logfile, 'a').close()
-        old = os.dup(1)
-        sys.stdout.flush()
-        os.close(1)
-        os.open(logfile, os.O_WRONLY)
+                scene.render.use_antialiasing = False
+                scene.render.filepath = join(rgb_path, obj.name, 'Image%04d.png' % get_real_frame(seq_frame))
+                log_message("Rendering frame %d" % seq_frame)
 
-        # Render
-        bpy.ops.render.render(write_still=True)
+                # disable render output
+                logfile = '/dev/null'
+                open(logfile, 'a').close()
+                old = os.dup(1)
+                sys.stdout.flush()
+                os.close(1)
+                os.open(logfile, os.O_WRONLY)
 
-        # disable output redirection
-        os.close(1)
-        os.dup(old)
-        os.close(old)
+                # Render
+                bpy.ops.render.render(write_still=True)
 
-        # NOTE:
-        # ideally, pixels should be readable from a viewer node, but I get only zeros
-        # --> https://ammous88.wordpress.com/2015/01/16/blender-access-render-results-pixels-directly-from-python-2/
-        # len(np.asarray(bpy.data.images['Render Result'].pixels) is 0
-        # Therefore we write them to temporary files and read with OpenEXR library (available for python2) in main_part2.py
-        # Alternatively, if you don't want to use OpenEXR library, the following commented code does loading with Blender functions, but it can cause memory leak.
-        # If you want to use it, copy necessary lines from main_part2.py such as definitions of dict_normal, matfile_normal...
+                # disable output redirection
+                os.close(1)
+                os.dup(old)
+                os.close(old)
 
-        #for k, folder in res_paths.items():
-        #   if not k== 'vblur' and not k=='fg':
-        #       path = join(folder, 'Image%04d.exr' % get_real_frame(seq_frame))
-        #       render_img = bpy.data.images.load(path)
-        #       # render_img.pixels size is width * height * 4 (rgba)
-        #       arr = np.array(render_img.pixels[:]).reshape(resx, resy, 4)[::-1,:, :] # images are vertically flipped 
-        #       if k == 'normal':# 3 channels, original order
-        #           mat = arr[:,:, :3]
-        #           dict_normal['normal_%d' % (iframe + 1)] = mat.astype(np.float32, copy=False)
-        #       elif k == 'gtflow':
-        #           mat = arr[:,:, 1:3]
-        #           dict_gtflow['gtflow_%d' % (iframe + 1)] = mat.astype(np.float32, copy=False)
-        #       elif k == 'depth':
-        #           mat = arr[:,:, 0]
-        #           dict_depth['depth_%d' % (iframe + 1)] = mat.astype(np.float32, copy=False)
-        #       elif k == 'segm':
-        #           mat = arr[:,:,0]
-        #           dict_segm['segm_%d' % (iframe + 1)] = mat.astype(np.uint8, copy=False)
-        #
-        #       # remove the image to release memory, object handles, etc.
-        #       render_img.user_clear()
-        #       bpy.data.images.remove(render_img)
+                # NOTE:
+                # ideally, pixels should be readable from a viewer node, but I get only zeros
+                # --> https://ammous88.wordpress.com/2015/01/16/blender-access-render-results-pixels-directly-from-python-2/
+                # len(np.asarray(bpy.data.images['Render Result'].pixels) is 0
+                # Therefore we write them to temporary files and read with OpenEXR library (available for python2) in main_part2.py
+                # Alternatively, if you don't want to use OpenEXR library, the following commented code does loading with Blender functions, but it can cause memory leak.
+                # If you want to use it, copy necessary lines from main_part2.py such as definitions of dict_normal, matfile_normal...
 
-        # bone locations should be saved after rendering so that the bones are updated
-        bone_locs_2D, bone_locs_3D = get_bone_locs(obname, arm_ob, scene, cam_ob)
-        dict_info['joints2D'][:, :, iframe] = np.transpose(bone_locs_2D)
-        dict_info['joints3D'][:, :, iframe] = np.transpose(bone_locs_3D)
+                #for k, folder in res_paths.items():
+                #   if not k== 'vblur' and not k=='fg':
+                #       path = join(folder, 'Image%04d.exr' % get_real_frame(seq_frame))
+                #       render_img = bpy.data.images.load(path)
+                #       # render_img.pixels size is width * height * 4 (rgba)
+                #       arr = np.array(render_img.pixels[:]).reshape(resx, resy, 4)[::-1,:, :] # images are vertically flipped
+                #       if k == 'normal':# 3 channels, original order
+                #           mat = arr[:,:, :3]
+                #           dict_normal['normal_%d' % (iframe + 1)] = mat.astype(np.float32, copy=False)
+                #       elif k == 'gtflow':
+                #           mat = arr[:,:, 1:3]
+                #           dict_gtflow['gtflow_%d' % (iframe + 1)] = mat.astype(np.float32, copy=False)
+                #       elif k == 'depth':
+                #           mat = arr[:,:, 0]
+                #           dict_depth['depth_%d' % (iframe + 1)] = mat.astype(np.float32, copy=False)
+                #       elif k == 'segm':
+                #           mat = arr[:,:,0]
+                #           dict_segm['segm_%d' % (iframe + 1)] = mat.astype(np.uint8, copy=False)
+                #
+                #       # remove the image to release memory, object handles, etc.
+                #       render_img.user_clear()
+                #       bpy.data.images.remove(render_img)
 
-        reset_loc = (bone_locs_2D.max(axis=-1) > 256).any() or (bone_locs_2D.min(axis=0) < 0).any()
-        arm_ob.pose.bones[obname+'_root'].rotation_quaternion = Quaternion((1, 0, 0, 0))
+                # bone locations should be saved after rendering so that the bones are updated
+                bone_locs_2D, bone_locs_3D = get_bone_locs(obname, arm_ob, scene, cam_ob)
+                dict_info['joints2D'][:, :, iframe] = np.transpose(bone_locs_2D)
+                dict_info['joints3D'][:, :, iframe] = np.transpose(bone_locs_3D)
 
-    # save a .blend file for debugging:
-    # bpy.ops.wm.save_as_mainfile(filepath=join(tmp_path, 'pre.blend'))
-    
-    # save RGB data with ffmpeg (if you don't have h264 codec, you can replace with another one and control the quality with something like -q:v 3)
-    cmd_ffmpeg = 'ffmpeg -y -r 30 -i ''%s'' -c:v h264 -pix_fmt yuv420p -crf 23 ''%s_c%04d.mp4''' % (join(rgb_path, 'Image%04d.png'), join(output_path, name.replace(' ', '')), (ishape + 1))
-    log_message("Generating RGB video (%s)" % cmd_ffmpeg)
-    os.system(cmd_ffmpeg)
-    
-    if(output_types['vblur']):
-        cmd_ffmpeg_vblur = 'ffmpeg -y -r 30 -i ''%s'' -c:v h264 -pix_fmt yuv420p -crf 23 -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" ''%s_c%04d.mp4''' % (join(res_paths['vblur'], 'Image%04d.png'), join(output_path, name.replace(' ', '')+'_vblur'), (ishape + 1))
-        log_message("Generating vblur video (%s)" % cmd_ffmpeg_vblur)
-        os.system(cmd_ffmpeg_vblur)
-   
-    if(output_types['fg']):
-        cmd_ffmpeg_fg = 'ffmpeg -y -r 30 -i ''%s'' -c:v h264 -pix_fmt yuv420p -crf 23 ''%s_c%04d.mp4''' % (join(res_paths['fg'], 'Image%04d.png'), join(output_path, name.replace(' ', '')+'_fg'), (ishape + 1))
-        log_message("Generating fg video (%s)" % cmd_ffmpeg_fg)
-        os.system(cmd_ffmpeg_fg)
-   
-    cmd_tar = 'tar -czvf %s/%s.tar.gz -C %s %s' % (output_path, rgb_dirname, tmp_path, rgb_dirname)
-    log_message("Tarballing the images (%s)" % cmd_tar)
-    os.system(cmd_tar)
-    
-    # save annotation excluding png/exr data to _info.mat file
-    import scipy.io
-    scipy.io.savemat(matfile_info, dict_info, do_compression=True)
+                reset_loc = (bone_locs_2D.max(axis=-1) > 256).any() or (bone_locs_2D.min(axis=0) < 0).any()
+                arm_ob.pose.bones[obname+'_root'].rotation_quaternion = Quaternion((1, 0, 0, 0))
+
+
+            # save a .blend file for debugging:
+            # bpy.ops.wm.save_as_mainfile(filepath=join(tmp_path, 'pre.blend'))
+
+            # save RGB data with ffmpeg (if you don't have h264 codec, you can replace with another one and control the quality with something like -q:v 3)
+            cmd_ffmpeg = 'ffmpeg -y -r 30 -i ''%s'' -c:v h264 -pix_fmt yuv420p -crf 23 ''%s_c%04d.mp4''' % (join(rgb_path, obj.name, 'Image%04d.png'), join(output_path, obj.name, name.replace(' ', '')), (ishape + 1))
+            log_message("Generating RGB video (%s)" % cmd_ffmpeg)
+            os.system(cmd_ffmpeg)
+
+            if(output_types['vblur']):
+                cmd_ffmpeg_vblur = 'ffmpeg -y -r 30 -i ''%s'' -c:v h264 -pix_fmt yuv420p -crf 23 -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" ''%s_c%04d.mp4''' % (join(res_paths['vblur'], 'Image%04d.png'), join(output_path, name.replace(' ', '')+'_vblur'), (ishape + 1))
+                log_message("Generating vblur video (%s)" % cmd_ffmpeg_vblur)
+                os.system(cmd_ffmpeg_vblur)
+
+            if(output_types['fg']):
+                cmd_ffmpeg_fg = 'ffmpeg -y -r 30 -i ''%s'' -c:v h264 -pix_fmt yuv420p -crf 23 ''%s_c%04d.mp4''' % (join(res_paths['fg'], 'Image%04d.png'), join(output_path, name.replace(' ', '')+'_fg'), (ishape + 1))
+                log_message("Generating fg video (%s)" % cmd_ffmpeg_fg)
+                os.system(cmd_ffmpeg_fg)
+
+            cmd_tar = 'tar -czvf %s/%s.tar.gz -C %s %s' % (join(output_path, obj.name), rgb_dirname, tmp_path, join(rgb_dirname, obj.name))
+            log_message("Tarballing the images (%s)" % cmd_tar)
+            os.system(cmd_tar)
+
+            # save annotation excluding png/exr data to _info.mat file
+            import scipy.io
+            scipy.io.savemat(matfile_info, dict_info, do_compression=True)
 
 if __name__ == '__main__':
     main()

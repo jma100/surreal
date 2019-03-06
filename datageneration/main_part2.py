@@ -4,6 +4,12 @@ from os import remove
 from os.path import join, dirname, realpath, exists
 import numpy as np
 
+def mkdir_safe(directory):
+    try:
+        os.makedirs(directory)
+    except FileExistsError:
+        pass
+
 def load_body_data(smpl_data, idx=0):
     cmu_keys = []
     for seq in smpl_data.files:
@@ -63,6 +69,7 @@ if __name__ == '__main__':
     
     # import idx info (name, split)
     idx_info = load(open("pkl/idx_info.pickle", 'rb'))
+    idx_info = [x for x in idx_info if x['name'][:4] != 'h36m']
 
     # get runpass
     (runpass, idx) = divmod(idx, len(idx_info))
@@ -113,51 +120,58 @@ if __name__ == '__main__':
     data = cmu_parms[name]
     nframes = len(data['poses'][::stepsize])
     output_path = join(output_path, 'run%d' % runpass, name.replace(" ", ""))
-    
-    # .mat files
-    matfile_normal = join(output_path, name.replace(" ", "") + "_c%04d_normal.mat" % (ishape + 1))
-    matfile_gtflow = join(output_path, name.replace(" ", "") + "_c%04d_gtflow.mat" % (ishape + 1))
-    matfile_depth = join(output_path, name.replace(" ", "") + "_c%04d_depth.mat" % (ishape + 1))
-    matfile_segm = join(output_path, name.replace(" ", "") + "_c%04d_segm.mat" % (ishape + 1))
-    dict_normal = {}
-    dict_gtflow = {}
-    dict_depth = {}
-    dict_segm = {}
-    get_real_frame = lambda ifr: ifr
-    FLOAT = Imath.PixelType(Imath.PixelType.FLOAT)
+
+
 
     # overlap determined by stride (# subsampled frames to skip)
     fbegin = ishape*stepsize*stride
     fend = min(ishape*stepsize*stride + stepsize*clipsize, len(data['poses']))
-    # LOOP OVER FRAMES
-    for seq_frame, (pose, trans) in enumerate(zip(data['poses'][fbegin:fend:stepsize], data['trans'][fbegin:fend:stepsize])):
-        iframe = seq_frame
-        
-        log_message("Processing frame %d" % iframe)
-        
-        for k, folder in res_paths.items():
-            if not k== 'vblur' and not k=='fg':
-                path = join(folder, 'Image%04d.exr' % get_real_frame(seq_frame))
-                exr_file = OpenEXR.InputFile(path)
-                if k == 'normal':
-                    mat = np.transpose(np.reshape([array.array('f', exr_file.channel(Chan, FLOAT)).tolist() for Chan in ("R", "G", "B")], (3, resx, resy)), (1, 2, 0))
-                    dict_normal['normal_%d' % (iframe + 1)] = mat.astype(np.float32, copy=False) # +1 for the 1-indexing
-                elif k == 'gtflow':
-                    mat = np.transpose(np.reshape([array.array('f', exr_file.channel(Chan, FLOAT)).tolist() for Chan in ("R", "G")], (2, resx, resy)), (1, 2, 0))
-                    dict_gtflow['gtflow_%d' % (iframe + 1)] = mat.astype(np.float32, copy=False)
-                elif k == 'depth':
-                    mat = np.reshape([array.array('f', exr_file.channel(Chan, FLOAT)).tolist() for Chan in ("R")], (resx, resy))
-                    dict_depth['depth_%d' % (iframe + 1)] = mat.astype(np.float32, copy=False)
-                elif k == 'segm':
-                    mat = np.reshape([array.array('f', exr_file.channel(Chan, FLOAT)).tolist() for Chan in ("R")], (resx, resy))
-                    dict_segm['segm_%d' % (iframe + 1)] = mat.astype(np.uint8, copy=False)
-                #remove(path)
 
-    import scipy.io
-    scipy.io.savemat(matfile_normal, dict_normal, do_compression=True)
-    scipy.io.savemat(matfile_gtflow, dict_gtflow, do_compression=True)
-    scipy.io.savemat(matfile_depth, dict_depth, do_compression=True)
-    scipy.io.savemat(matfile_segm, dict_segm, do_compression=True)
+
+    obj_names = ['Camera', 'Camera.001']
+    for obj_name in obj_names:
+
+            # .mat files
+            matfile_normal = join(output_path, obj_name, name.replace(" ", "") + "_c%04d_normal.mat" % (ishape + 1))
+            matfile_gtflow = join(output_path, obj_name, name.replace(" ", "") + "_c%04d_gtflow.mat" % (ishape + 1))
+            matfile_depth = join(output_path, obj_name, name.replace(" ", "") + "_c%04d_depth.mat" % (ishape + 1))
+            matfile_segm = join(output_path, obj_name, name.replace(" ", "") + "_c%04d_segm.mat" % (ishape + 1))
+            dict_normal = {}
+            dict_gtflow = {}
+            dict_depth = {}
+            dict_segm = {}
+            get_real_frame = lambda ifr: ifr
+            FLOAT = Imath.PixelType(Imath.PixelType.FLOAT)
+
+            # LOOP OVER FRAMES
+            for seq_frame, (pose, trans) in enumerate(zip(data['poses'][fbegin:fend:stepsize], data['trans'][fbegin:fend:stepsize])):
+                iframe = seq_frame
+
+                log_message("Processing frame %d" % iframe)
+
+                for k, folder in res_paths.items():
+                    if not k== 'vblur' and not k=='fg':
+                        path = join(folder, obj_name, 'Image%04d.exr' % get_real_frame(seq_frame))
+                        exr_file = OpenEXR.InputFile(path)
+                        if k == 'normal':
+                            mat = np.transpose(np.reshape([array.array('f', exr_file.channel(Chan, FLOAT)).tolist() for Chan in ("R", "G", "B")], (3, resx, resy)), (1, 2, 0))
+                            dict_normal['normal_%d' % (iframe + 1)] = mat.astype(np.float32, copy=False) # +1 for the 1-indexing
+                        elif k == 'gtflow':
+                            mat = np.transpose(np.reshape([array.array('f', exr_file.channel(Chan, FLOAT)).tolist() for Chan in ("R", "G")], (2, resx, resy)), (1, 2, 0))
+                            dict_gtflow['gtflow_%d' % (iframe + 1)] = mat.astype(np.float32, copy=False)
+                        elif k == 'depth':
+                            mat = np.reshape([array.array('f', exr_file.channel(Chan, FLOAT)).tolist() for Chan in ("R")], (resx, resy))
+                            dict_depth['depth_%d' % (iframe + 1)] = mat.astype(np.float32, copy=False)
+                        elif k == 'segm':
+                            mat = np.reshape([array.array('f', exr_file.channel(Chan, FLOAT)).tolist() for Chan in ("R")], (resx, resy))
+                            dict_segm['segm_%d' % (iframe + 1)] = mat.astype(np.uint8, copy=False)
+                        #remove(path)
+
+            import scipy.io
+            scipy.io.savemat(matfile_normal, dict_normal, do_compression=True)
+            scipy.io.savemat(matfile_gtflow, dict_gtflow, do_compression=True)
+            scipy.io.savemat(matfile_depth, dict_depth, do_compression=True)
+            scipy.io.savemat(matfile_segm, dict_segm, do_compression=True)
 
     # cleaning up tmp
     if tmp_path != "" and tmp_path != "/":
