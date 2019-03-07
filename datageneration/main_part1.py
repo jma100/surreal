@@ -657,12 +657,14 @@ def main():
     batch_it = 0
     curr_shape = reset_joint_positions(orig_trans, shape, ob, arm_ob, obname, scene,
                                        cam_ob, smpl_data['regression_verts'], smpl_data['joint_regressor'])
-    random_zrot = 2*np.pi*np.random.rand()
-    
+    # random_zrot = 2*np.pi*np.random.rand()
+    random_zrot = 0
+
     arm_ob.animation_data_clear()
     cam_ob.animation_data_clear()
     arm_ob.rotation_euler.x -= math.pi / 2
-
+    orig_loc = arm_ob.location
+    arm_ob.location = (0,0,orig_loc[2])
     # create a keyframe animation with pose, translation, blendshapes and camera motion
     # LOOP TO CREATE 3D ANIMATION
     for seq_frame, (pose, trans) in enumerate(zip(data['poses'][fbegin:fend:stepsize], data['trans'][fbegin:fend:stepsize])):
@@ -705,6 +707,7 @@ def main():
         for sc in scs:
             sc.inputs[ish+1].default_value = coeff
 
+    import pdb; pdb.set_trace()
     # iterate over the keyframes and render
     # LOOP TO RENDER
     for seq_frame, (pose, trans) in enumerate(zip(data['poses'][fbegin:fend:stepsize], data['trans'][fbegin:fend:stepsize])):
