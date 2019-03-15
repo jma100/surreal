@@ -6,6 +6,7 @@ from mathutils import Matrix, Vector, Quaternion, Euler
 import itertools
 from random import choice
 import random
+import numpy as np
 
 def bmesh_copy_from_object(obj, transform=True, triangulate=True, apply_modifiers=False):
     """
@@ -126,6 +127,8 @@ def main():
     scene_max_y = 1
     all_spots = [element for element in itertools.product(range(scene_min_x, scene_max_x),
                                                           range(scene_min_y, scene_max_y))]
+
+    zrots_all = [0, 1/4*np.pi, 1/2*np.pi, 3/4*np.pi, np.pi, 5/4 * np.pi, 3/2*np.pi, 7/4*np.pi]
     random.seed(0)
     random.shuffle(all_spots)
 
@@ -145,18 +148,26 @@ def main():
         chosen_spot = None
         for spot in all_spots:
             mesh.location = Vector([spot[0], spot[1], 0])
-            other_objs = [ob for ob in bpy.data.objects if ob != mesh]
-            intersect = False
-            for other_obj in other_objs:
-                intersect = bmesh_check_intersect_objects(mesh, other_obj) or intersect
-                # print(other_obj)
-                if intersect:
+            zrots = [choice(zrots_all)]
+            print("//////////////////")
+            print("Rotation: " + str(zrots[0]))
+            print("//////////////////")
+            for zrot in zrots:
+                mesh.rotation_euler.z = zrot
+                other_objs = [ob for ob in bpy.data.objects if ob != mesh]
+                intersect = False
+                for other_obj in other_objs:
+                    intersect = bmesh_check_intersect_objects(mesh, other_obj) or intersect
+                    # print(other_obj)
+                    if intersect:
+                        break
+                if not intersect:
+                    chosen_spot = spot
+                    print("////// SPOT CHOSEN ///////")
+                    print(mesh.location)
+
                     break
             if not intersect:
-                chosen_spot = spot
-                print("////// SPOT CHOSEN ///////")
-                print(mesh.location)
-
                 break
             # if no intersection, skip
         if chosen_spot:
